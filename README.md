@@ -293,3 +293,25 @@ MIT — use it, fork it, ship it.
   Built by <a href="https://www.linkedin.com/in/daniel-shashko/">Daniel Shashko</a><br/>
   <sub>Powered by <a href="https://brightdata.com/?utm_source=geo-tracker-os">Bright Data</a></sub>
 </p>
+
+---
+
+## Fork note: Gemini grounding is wired up
+
+In upstream, the SRO Analysis tab showed a "Running Gemini Grounding" stage but
+never called Gemini: it fired a throwaway request at `/api/analyze`, discarded the
+response and passed `grounding = null` down the pipeline. `analyzeGrounding()` was
+only reachable from `/api/bulk-sro`, which no tab calls and which swallows grounding
+errors in an empty `catch`. `GEMINI_API_KEY` was therefore never exercised, and a
+misconfigured key looked identical to a working one.
+
+This fork adds `app/api/grounding/route.ts` and points the SRO Analysis tab at it.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/grounding` | Runs the grounding stage; returns the real Gemini error instead of hiding it |
+| `GET /api/grounding` | Reports whether `GEMINI_API_KEY` is visible to the deployment |
+| `GET /api/grounding?test=1` | Performs a minimal grounded call — use it to confirm the key works and that Google Search grounding is enabled |
+
+A failed grounding stage now renders a visible panel in the UI rather than an
+empty section, and the rest of the SRO pipeline still runs.
