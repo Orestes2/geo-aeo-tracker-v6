@@ -30,6 +30,7 @@ interface SROState {
   stage: AnalysisStage;
   error: string | null;
   grounding: GroundingResult | null;
+  groundingError: string | null;
   platforms: PlatformResult[];
   serp: SerpResult | null;
   targetPage: ScrapedPage | null;
@@ -44,6 +45,7 @@ const INITIAL: SROState = {
   stage: "idle",
   error: null,
   grounding: null,
+  groundingError: null,
   platforms: [],
   serp: null,
   targetPage: null,
@@ -103,6 +105,7 @@ const DEMO_SRO_RESULT: SROState = {
   keyword: "best healthy meal kit",
   stage: "done",
   error: null,
+  groundingError: null,
   grounding: {
     query: "best healthy meal kit",
     answer:
@@ -473,7 +476,8 @@ export function SROAnalysisTab({
       stage: "grounding",
     }));
 
-    const grounding: GroundingResult | null = null;
+    let grounding: GroundingResult | null = null;
+    let groundingError: string | null = null;
     let platforms: PlatformResult[] = [];
     let serp: SerpResult | null = null;
     let targetPage: ScrapedPage | null = null;
@@ -482,25 +486,34 @@ export function SROAnalysisTab({
     let llmAnalysis: LLMAnalysisResult | null = null;
 
     try {
-      // 1. Gemini Grounding
+      // 1. Gemini Grounding - real call to the server-side route.
       try {
-        const resp = await fetch("/api/analyze", {
+        const resp = await fetch("/api/grounding", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            prompt: `Analyze the Gemini grounding for "${s.keyword}" targeting ${s.targetUrl}. Call the /api/sro-analyze endpoint on the server side.`,
-            maxTokens: 256,
+            targetUrl: s.targetUrl,
+            keyword: s.keyword,
           }),
         });
-        // Actually call the dedicated grounding endpoint if available,
-        // but since there's no grounding API route (Gemini runs server-side only),
-        // we skip grounding on the client and let the final SRO analysis handle it.
-        // For now we'll try the grounding via the bulk proxy or skip gracefully.
-        void resp;
-      } catch {
-        // Grounding is optional
+        const payload = await resp.json();
+        if (resp.ok && payload?.ok) {
+          grounding = payload.grounding as GroundingResult;
+        } else {
+          groundingError =
+            payload?.error ?? `Grounding request failed (${resp.status})`;
+        }
+      } catch (err) {
+        // Grounding is optional for the rest of the pipeline, but we no longer
+        // hide the reason it failed.
+        groundingError = err instanceof Error ? err.message : String(err);
       }
-      setS((prev) => ({ ...prev, grounding, stage: "platforms" }));
+      setS((prev) => ({
+        ...prev,
+        grounding,
+        groundingError,
+        stage: "platforms",
+      }));
 
       // 2. Platform Citations
       try {
@@ -608,6 +621,7 @@ export function SROAnalysisTab({
       setS((prev) => ({
         ...prev,
         grounding,
+        groundingError,
         platforms,
         serp,
         targetPage,
@@ -688,6 +702,27 @@ export function SROAnalysisTab({
                   {s.llmAnalysis.summary}
                 </p>
               </div>
+            </div>
+          )}
+
+          {/* Grounding failure - surfaced instead of silently swallowed */}
+          {!s.grounding && s.groundingError && (
+            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 shadow-sm">
+              <div className="mb-1 text-sm font-semibold text-amber-600 dark:text-amber-400">
+                ⚠️ Gemini Grounding unavailable
+              </div>
+              <p className="text-sm leading-relaxed text-th-text-secondary">
+                The rest of the analysis still ran, but the grounding stage
+                failed:
+              </p>
+              <pre className="mt-2 overflow-x-auto whitespace-pre-wrap rounded-lg bg-th-bg p-2 text-xs text-th-text-secondary">
+                {s.groundingError}
+              </pre>
+              <p className="mt-2 text-xs text-th-text-secondary">
+                Check that <code>GEMINI_API_KEY</code> is set for this
+                environment in Vercel (Settings, Environment Variables), and
+                that the Generative Language API is enabled for that key.
+              </p>
             </div>
           )}
 
