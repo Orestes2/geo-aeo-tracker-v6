@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, type ReactNode } from "react";
 import type {
   GroundingResult,
   PlatformResult,
@@ -336,6 +336,38 @@ const STAGE_LABELS: Record<AnalysisStage, string> = {
 };
 
 // ── Helper components ─────────────────────────────────────
+
+/** Words of the grounded answer supported by grounding chunk `idx`. */
+function chunkWordCount(g: GroundingResult, idx: number): number {
+  return g.supports
+    .filter((sp) => sp.chunkIndices.includes(idx))
+    .reduce((sum, sp) => sum + sp.text.split(/\s+/).length, 0);
+}
+
+/** Fixed-height, independently scrollable list so raw data cannot stretch the page. */
+function ScrollBox({
+  title,
+  count,
+  children,
+}: {
+  title: string;
+  count: number;
+  children: ReactNode;
+}) {
+  return (
+    <div className="mt-3">
+      <div className="mb-1 flex items-baseline justify-between">
+        <span className="text-xs font-medium text-th-text-muted">{title}</span>
+        <span className="text-[10px] tabular-nums text-th-text-muted">
+          {count}
+        </span>
+      </div>
+      <div className="max-h-56 space-y-1 overflow-y-auto overscroll-contain rounded-lg border border-th-border bg-th-bg p-2">
+        {children}
+      </div>
+    </div>
+  );
+}
 
 function ScoreRing({ score, size = 100 }: { score: number; size?: number }) {
   const r = size * 0.36;
@@ -750,21 +782,104 @@ export function SROAnalysisTab({
                   value={`${s.grounding.targetGroundingWords} / ${s.grounding.totalGroundingWords}`}
                 />
               </div>
-              {s.grounding.targetSnippets.length > 0 && (
-                <div className="mt-3 space-y-1">
-                  <div className="text-xs font-medium text-th-text-muted">
-                    Grounding snippets attributed to your page:
-                  </div>
-                  {s.grounding.targetSnippets.slice(0, 3).map((snip, i) => (
+              {s.grounding.searchQueries.length > 0 && (
+                <ScrollBox
+                  title="Fanout queries Gemini actually ran"
+                  count={s.grounding.searchQueries.length}
+                >
+                  {s.grounding.searchQueries.map((q, i) => (
                     <div
                       key={i}
-                      className="rounded-lg border border-th-border bg-th-card-alt px-3 py-2 text-xs text-th-text-secondary"
+                      className="flex gap-2 rounded-md bg-th-card-alt px-2 py-1 text-xs text-th-text-secondary"
                     >
-                      &ldquo;{snip.slice(0, 300)}&rdquo;
+                      <span className="shrink-0 tabular-nums text-th-text-muted">
+                        {i + 1}.
+                      </span>
+                      <span className="break-words">{q}</span>
                     </div>
                   ))}
-                </div>
+                </ScrollBox>
               )}
+
+              {s.grounding.chunks.length > 0 && (
+                <ScrollBox
+                  title="All grounding sources, by share of the answer"
+                  count={s.grounding.chunks.length}
+                >
+                  {s.grounding.chunks
+                    .map((chunk, idx) => ({
+                      chunk,
+                      idx,
+                      words: chunkWordCount(s.grounding as GroundingResult, idx),
+                      isTarget: (
+                        s.grounding as GroundingResult
+                      ).targetUrlChunkIndices.includes(idx),
+                    }))
+                    .sort((a, b) => b.words - a.words)
+                    .map(({ chunk, idx, words, isTarget }) => {
+                      const total =
+                        (s.grounding as GroundingResult).totalGroundingWords ||
+                        1;
+                      return (
+                        <div
+                          key={idx}
+                          className={`flex items-baseline gap-2 rounded-md px-2 py-1 text-xs ${
+                            isTarget
+                              ? "bg-emerald-500/10 text-th-text"
+                              : "bg-th-card-alt text-th-text-secondary"
+                          }`}
+                        >
+                          <span className="shrink-0 tabular-nums text-th-text-muted">
+                            #{idx + 1}
+                          </span>
+                          <span className="min-w-0 flex-1 break-words">
+                            {chunk.uri ? (
+                              <a
+                                href={chunk.uri}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="hover:underline"
+                              >
+                                {chunk.title || chunk.uri}
+                              </a>
+                            ) : (
+                              chunk.title || "(untitled source)"
+                            )}
+                            {isTarget && (
+                              <span className="ml-2 rounded bg-emerald-500/20 px-1 py-0.5 text-[10px] font-medium text-emerald-500">
+                                YOU
+                              </span>
+                            )}
+                          </span>
+                          <span className="shrink-0 tabular-nums text-th-text-muted">
+                            {words}w &middot; {((words / total) * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                      );
+                    })}
+                </ScrollBox>
+              )}
+
+              {s.grounding.targetSnippets.length > 0 && (
+                <ScrollBox
+                  title="Snippets attributed to your page"
+                  count={s.grounding.targetSnippets.length}
+                >
+                  {s.grounding.targetSnippets.map((snip, i) => (
+                    <div
+                      key={i}
+                      className="rounded-md border border-th-border bg-th-card-alt px-3 py-2 text-xs leading-relaxed text-th-text-secondary"
+                    >
+                      &ldquo;{snip}&rdquo;
+                    </div>
+                  ))}
+                </ScrollBox>
+              )}
+
+              <p className="mt-3 text-[11px] leading-relaxed text-th-text-muted">
+                Source shares can exceed 100% in total: one passage may cite
+                several sources, and its words count towards each of them.
+              </p>
             </div>
           )}
 
