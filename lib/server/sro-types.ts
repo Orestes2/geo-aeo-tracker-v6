@@ -3,7 +3,19 @@
 export interface GroundingChunk {
   uri: string;
   title: string;
+  /** URL real tras resolver el redirect de vertexaisearch. */
+  resolvedUrl?: string;
+  /** true si el redirect no se pudo resolver. */
+  unresolved?: boolean;
 }
+export interface UrlShare {
+  url: string;
+  host: string;
+  words: number;
+  share: number;
+  chunkIndices: number[];
+}
+
 
 export interface GroundingSupport {
   startIndex: number;
@@ -25,6 +37,12 @@ export interface GroundingResult {
   totalGroundingWords: number;
   targetGroundingWords: number;
   selectionRate: number;
+  /** Reparto del pool por URL completa, de mayor a menor. */
+  urlBreakdown?: UrlShare[];
+  /** Cuota del dominio del objetivo (lo que devolvia la version anterior). */
+  domainSelectionRate?: number;
+  /** Redirects que no se pudieron resolver en esta tirada. */
+  unresolvedCount?: number;
 }
 
 // ─── Bright Data Platform Types ───────────────────────────────────────────

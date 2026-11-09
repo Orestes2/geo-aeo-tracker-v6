@@ -4,6 +4,11 @@ import type {
   GroundingSupport,
 } from "./sro-types";
 import { withTimeout } from "./http";
+import {
+  resolveChunkUrls,
+  buildUrlBreakdown,
+  normalizeUrl,
+} from "./grounding-attribution";
 
 function extractDomain(url: string): string {
   try {
@@ -13,28 +18,6 @@ function extractDomain(url: string): string {
   }
 }
 
-function urlMatchesTarget(sourceUrl: string, targetUrl: string): boolean {
-  const sourceDomain = extractDomain(sourceUrl);
-  const targetDomain = extractDomain(targetUrl);
-  if (!sourceDomain || !targetDomain) return false;
-
-  if (sourceDomain === targetDomain) return true;
-
-  try {
-    const source = new URL(sourceUrl);
-    const target = new URL(targetUrl);
-    if (
-      source.hostname.replace(/^www\./, "") ===
-      target.hostname.replace(/^www\./, "")
-    ) {
-      return true;
-    }
-  } catch {
-    // fall through
-  }
-
-  return false;
-}
 
 export async function analyzeGrounding(
   keyword: string,
@@ -86,14 +69,18 @@ export async function analyzeGrounding(
 
   const targetDomain = extractDomain(targetUrl);
   const targetChunkIndices: number[] = [];
-  chunks.forEach((chunk, idx) => {
-    const titleDomain = chunk.title.replace(/^www\./, "").toLowerCase();
-    if (
-      urlMatchesTarget(chunk.uri, targetUrl) ||
-      titleDomain === targetDomain ||
-      titleDomain.endsWith(`.${targetDomain}`) ||
-      targetDomain.endsWith(`.${titleDomain}`)
-    ) {
+  const resolvedUrls = await resolveChunkUrls(chunks.map((c) => c.uri));
+  resolvedUrls.forEach((u, i) => {
+    chunks[i].resolvedUrl = u;
+    chunks[i].unresolved =
+      u === chunks[i].uri && u.includes("vertexaisearch.cloud.google.com");
+  });
+
+  // Atribucion por URL completa, no por host: el title de Gemini es solo el
+  // dominio, asi que comparar por host contaba cualquier pagina del sitio.
+  const normTarget = normalizeUrl(targetUrl);
+  resolvedUrls.forEach((u, idx) => {
+    if (normalizeUrl(u) === normTarget) {
       targetChunkIndices.push(idx);
     }
   });
@@ -122,6 +109,18 @@ export async function analyzeGrounding(
   const selectionRate =
     totalGroundingWords > 0 ? targetGroundingWords / totalGroundingWords : 0;
 
+  const domainWords = supports.reduce((sum, s) => {
+    const hit = (s.chunkIndices ?? []).some(
+      (i) =>
+        i >= 0 &&
+        i < resolvedUrls.length &&
+        extractDomain(resolvedUrls[i]) === targetDomain,
+    );
+    return hit ? sum + (s.text?.split(/\s+/).filter(Boolean).length ?? 0) : sum;
+  }, 0);
+  const domainSelectionRate =
+    totalGroundingWords > 0 ? domainWords / totalGroundingWords : 0;
+
   return {
     query: keyword,
     answer: answerText,
@@ -134,5 +133,8 @@ export async function analyzeGrounding(
     totalGroundingWords,
     targetGroundingWords,
     selectionRate,
+    urlBreakdown: buildUrlBreakdown(resolvedUrls, supports, totalGroundingWords),
+    domainSelectionRate,
+    unresolvedCount: chunks.filter((c) => c.unresolved).length,
   };
 }
